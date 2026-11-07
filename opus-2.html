@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>3D 遊園地の箱庭</title>
+<link rel="icon" href="data:,">
+<style>
+html,body{margin:0;height:100%;overflow:hidden;background:#000}
+canvas{display:block}
+#btn{position:fixed;top:16px;right:16px;z-index:10;padding:10px 20px;font:bold 16px sans-serif;border:none;border-radius:22px;background:rgba(255,255,255,.85);color:#222;cursor:pointer;box-shadow:0 2px 10px rgba(0,0,0,.35)}
+#btn:hover{background:#fff}
+#title{position:fixed;top:14px;left:20px;color:#fff;font:bold 22px sans-serif;text-shadow:0 2px 6px rgba(0,0,0,.7);pointer-events:none}
+</style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"}}</script>
+</head>
+<body>
+<div id="title">ドリームパーク 箱庭</div>
+<button id="btn">🌙 夜にする</button>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0xcfe6f5, 200, 480);
+const camera = new THREE.PerspectiveCamera(42, innerWidth / innerHeight, 0.5, 1200);
+camera.position.set(100, 85, 125);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(-4, 6, -6);
+controls.enableDamping = true;
+controls.maxPolarAngle = Math.PI * 0.48;
+controls.minDistance = 15;
+controls.maxDistance = 380;
+controls.update();
+
+const V = (x, y, z) => new THREE.Vector3(x, y, z);
+const UPV = V(0, 1, 0);
+const M = (c, o = {}) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.7, ...o });
+const glowMats = [];
+function glow(color, d = 0, n = 2.5) {
+  const m = new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: d, roughness: 0.4 });
+  glowMats.push({ m, d, n }); return m;
+}
+function mesh(geo, mat, x = 0, y = 0, z = 0, parent = scene) {
+  const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z);
+  m.castShadow = true; m.receiveShadow = true; parent.add(m); return m;
+}
+function beam(a, b, r, mat, parent = scene) {
+  const d = new THREE.Vector3().subVectors(b, a); const len = d.length();
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, len, 8), mat);
+  m.position.copy(a).addScaledVector(d, 0.5);
+  m.quaternion.setFromUnitVectors(UPV, d.normalize());
+  m.castShadow = true; parent.add(m); return m;
+}
+function canvasTex(w, h, draw, rep) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  draw(c.getContext('2d'), w, h);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.RepeatWrapping; if (rep) t.repeat.set(rep, rep); t.anisotropy = 8;
+  return t;
+}
+function stripes(c1, c2, n) {
+  return canvasTex(256, 32, (g, w, h) => { for (let i = 0; i < n; i++) { g.fillStyle = i % 2 ? c2 : c1; g.fillRect(i * w / n, 0, w / n + 1, h); } });
+}
+function skyTex(top, mid, bot) {
+  return canvasTex(2, 256, (g) => { const gr = g.createLinearGradient(0, 0, 0, 256); gr.addColorStop(0, top); gr.addColorStop(0.6, mid); gr.addColorStop(1, bot); g.fillStyle = gr; g.fillRect(0, 0, 2, 256); });
+}
+const skyD = skyTex('#3f8fdc', '#9fd0f5', '#e6f3fb');
+const skyN = skyTex('#02040f', '#0b1438', '#1c2550');
+scene.background = skyD;
+
+// ---------- Lights ----------
+const hemi = new THREE.HemisphereLight(0xbfe3ff, 0x6a8a4a, 0.9);
+scene.add(hemi);
+const sun = new THREE.DirectionalLight(0xfff2dd, 2.3);
+sun.position.set(60, 110, 50); sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -95, right: 95, top: 95, bottom: -95, near: 10, far: 320 });
+sun.shadow.bias = -0.0005; sun.shadow.normalBias = 0.03;
+scene.add(sun, sun.target);
+const lamps = [];
+function pLight(color, n, dist, x, y, z, parent = scene) {
+  const L = new THREE.PointLight(color, 0, dist, 2); L.position.set(x, y, z); L.userData.n = n; parent.add(L); lamps.push(L); return L;
+}
+
+// ---------- Ground ----------
+const grassTex = canvasTex(256, 256, (g, w, h) => {
+  g.fillStyle = '#5c9e3c'; g.fillRect(0, 0, w, h);
+  for (let i = 0; i < 4000; i++) { const s = Math.random(); g.fillStyle = s < .5 ? '#6aae45' : s < .8 ? '#4e8c33' : '#7cbc52'; g.fillRect(Math.random() * w, Math.random() * h, 2, 2); }
+}, 40);
+const outer = mesh(new THREE.PlaneGeometry(800, 800), M(0x4d8a34, { map: grassTex }), 0, -0.02, 0);
+outer.rotation.x = -Math.PI / 2;
+const inTex = grassTex.clone(); inTex.repeat.set(12, 12); inTex.needsUpdate = true;
+const inner = mesh(new THREE.PlaneGeometry(132, 122), M(0x8fd06a, { map: inTex }), -3, 0, 2);
+inner.rotation.x = -Math.PI / 2;
+const pathM = M(0xdcc69c, { roughness: 0.95 });
+function path(x1, z1, x2, z2, w) {
+  const dx = x2 - x1, dz = z2 - z1, len = Math.hypot(dx, dz);
+  const m = mesh(new THREE.BoxGeometry(w, 0.06, len + w), pathM, (x1 + x2) / 2, 0.03, (z1 + z2) / 2);
+  m.rotation.y = Math.atan2(dx, dz); m.castShadow = false;
+}
+path(0, 20, 0, 66, 6); path(6, 4, 30, -15, 4.5); path(-8, 4, -40, -10, 4.5); path(-8, 14, -16, 17, 4);
+path(8, 16, 34, 6, 4); path(-8, 16, -12, 38, 3.5); path(-40, -10, -50, 4, 4);
+const plaza = mesh(new THREE.CylinderGeometry(13, 13, 0.1, 48), M(0xe6d2a8, { roughness: 0.9 }), 0, 0.05, 10);
+plaza.castShadow = false;
+
+// ---------- Fence ----------
+const fenceM = M(0xffffff, { roughness: 0.5 });
+const postMats = [];
+function fenceLine(x1, z1, x2, z2) {
+  const dx = x2 - x1, dz = z2 - z1, len = Math.hypot(dx, dz), n = Math.ceil(len / 2.5);
+  for (let i = 0; i <= n; i++) postMats.push(new THREE.Matrix4().makeTranslation(x1 + dx * i / n, 0.75, z1 + dz * i / n));
+  for (const y of [0.6, 1.2]) { const r = mesh(new THREE.BoxGeometry(0.12, 0.14, len), fenceM, (x1 + x2) / 2, y, (z1 + z2) / 2); r.rotation.y = Math.atan2(dx, dz); }
+}
+fenceLine(-68, -58, 62, -58); fenceLine(-68, -58, -68, 62); fenceLine(62, -58, 62, 62);
+fenceLine(-68, 62, -8, 62); fenceLine(8, 62, 62, 62);
+const posts = new THREE.InstancedMesh(new THREE.BoxGeometry(0.3, 1.5, 0.3), fenceM, postMats.length);
+postMats.forEach((m, i) => posts.setMatrixAt(i, m)); posts.castShadow = true; scene.add(posts);
+
+// ---------- Trees ----------
+const trunkG = new THREE.CylinderGeometry(0.25, 0.35, 2, 8), coneG1 = new THREE.ConeGeometry(1.8, 3, 10), coneG2 = new THREE.ConeGeometry(1.3, 2.4, 10), ballG = new THREE.IcosahedronGeometry(1.8, 1), ballG2 = new THREE.IcosahedronGeometry(1.2, 1);
+const trunkM = M(0x7a5232), leafMs = [M(0x3f8f3a, { flatShading: true }), M(0x2f7a35, { flatShading: true }), M(0x5aa845, { flatShading: true })];
+let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+function tree(x, z, s = 1) {
+  const g = new THREE.Group(); g.position.set(x, 0, z); g.scale.setScalar(s); scene.add(g);
+  const leaf = leafMs[Math.floor(rnd() * 3)];
+  mesh(trunkG, trunkM, 0, 1, 0, g);
+  if (rnd() < 0.5) { mesh(coneG1, leaf, 0, 3.2, 0, g); mesh(coneG2, leaf, 0, 4.6, 0, g); }
+  else { mesh(ballG, leaf, 0, 3.4, 0, g); mesh(ballG2, leaf, 0.6, 4.4, 0.3, g); }
+}
+for (let x = -62; x <= 56; x += 7) { tree(x, -54, 0.9 + rnd() * 0.5); if (Math.abs(x) > 12) tree(x, 58, 0.9 + rnd() * 0.5); }
+for (let z = -46; z <= 52; z += 7) { tree(-64, z, 0.9 + rnd() * 0.5); tree(58, z, 0.9 + rnd() * 0.5); }
+for (let i = 0; i < 70; i++) { const a = rnd() * Math.PI * 2, r = 95 + rnd() * 80; tree(Math.cos(a) * r, Math.sin(a) * r, 1.2 + rnd() * 1.2); }
+[[24, 28], [26, 40], [-30, 44], [-40, 26], [44, 22], [-6, -14], [16, -4], [-56, 18]].forEach(([x, z]) => tree(x, z, 1.1));
+
+// ---------- Lamps ----------
+const poleM = M(0x2d3440, { metalness: 0.5, roughness: 0.4 });
+const bulbM = glow(0xffe2a8, 0.15, 3);
+const poleG = new THREE.CylinderGeometry(0.12, 0.16, 5, 8), bulbG = new THREE.SphereGeometry(0.45, 12, 8);
+function lamp(x, z, light) {
+  mesh(poleG, poleM, x, 2.5, z);
+  const b = mesh(bulbG, bulbM, x, 5.2, z); b.castShadow = false;
+  if (light) pLight(0xffd9a0, 45, 26, x, 4.8, z);
+}
+lamp(4.5, 30, true); lamp(-4.5, 30, true); lamp(4.5, 48, true); lamp(-4.5, 48, true);
+lamp(10, 1, true); lamp(-10, 1, true);
+lamp(4.5, 60); lamp(-4.5, 60); lamp(20, -6); lamp(-26, -4); lamp(-46, -4); lamp(22, 14); lamp(-12, 26);
+
+// ---------- Buildings ----------
+function shop(x, z, ry, col, roofCol, aw) {
+  const g = new THREE.Group(); g.position.set(x, 0, z); g.rotation.y = ry; scene.add(g);
+  mesh(new THREE.BoxGeometry(7, 4, 5), M(col), 0, 2, 0, g);
+  const rg = new THREE.ConeGeometry(5.4, 2.6, 4); rg.rotateY(Math.PI / 4);
+  const roof = mesh(rg, M(roofCol, { flatShading: true }), 0, 5.3, 0, g); roof.scale.z = 0.75;
+  const win = glow(0xffd27a, 0.05, 1.6);
+  mesh(new THREE.BoxGeometry(1.8, 1.4, 0.1), win, -2.1, 2.3, 2.51, g);
+  mesh(new THREE.BoxGeometry(1.8, 1.4, 0.1), win, 2.1, 2.3, 2.51, g);
+  mesh(new THREE.BoxGeometry(1.2, 2.4, 0.1), M(0x5a3a22), 0, 1.2, 2.52, g);
+  const a = mesh(new THREE.BoxGeometry(7.4, 0.15, 1.6), M(0xffffff, { map: stripes(aw, '#ffffff', 10) }), 0, 3.5, 3.1, g);
+  a.rotation.x = 0.3;
+}
+shop(14, 28, -Math.PI / 2, 0xfff1d6, 0xd94a3d, '#e04848');
+shop(14, 44, -Math.PI / 2, 0xe8f4ff, 0x3d7fd9, '#3d7fd9');
+shop(-14, 46, Math.PI / 2, 0xfff6c8, 0x3aa856, '#3aa856');
+shop(40, 10, Math.PI, 0xffe4ef, 0xc23d8a, '#ea6bb0');
+shop(-50, 10, Math.PI, 0xf2e9ff, 0xf09a2a, '#f0a02a');
+shop(-34, 40, Math.PI / 2, 0xe6fff0, 0x7a4bc2, '#9a6be0');
+// Gate
+const gateM = M(0xf6f0e4), gateRoof = M(0xc0262d, { flatShading: true });
+for (const x of [-7.5, 7.5]) { mesh(new THREE.BoxGeometry(3, 9, 3), gateM, x, 4.5, 62); mesh(new THREE.ConeGeometry(2.6, 3.5, 8), gateRoof, x, 10.75, 62); const b = mesh(new THREE.SphereGeometry(0.4, 10, 8), bulbM, x, 12.8, 62); b.castShadow = false; }
+mesh(new THREE.BoxGeometry(12, 3.2, 0.6), M(0xc0262d), 0, 7.6, 62);
+const signTex = canvasTex(512, 128, (g, w, h) => {
+  g.fillStyle = '#c0262d'; g.fillRect(0, 0, w, h); g.strokeStyle = '#ffd34d'; g.lineWidth = 10; g.strokeRect(6, 6, w - 12, h - 12);
+  g.fillStyle = '#fff'; g.font = 'bold 70px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText('DREAM PARK', w / 2, h / 2 + 4);
+});
+const signM = new THREE.MeshStandardMaterial({ map: signTex, emissive: 0xffffff, emissiveMap: signTex, emissiveIntensity: 0.1 });
+glowMats.push({ m: signM, d: 0.1, n: 1.2 });
+for (const s of [1, -1]) { const p = new THREE.Mesh(new THREE.PlaneGeometry(11.6, 2.9), signM); p.position.set(0, 7.6, 62 + s * 0.31); if (s < 0) p.rotation.y = Math.PI; scene.add(p); }
+mesh(new THREE.BoxGeometry(3, 2.6, 2.4), M(0xfff1d6), 11, 1.3, 56); mesh(new THREE.ConeGeometry(2.3, 1.4, 4), gateRoof, 11, 3.3, 56).rotation.y = Math.PI / 4;
+
+// ---------- Fountain & flowers ----------
+mesh(new THREE.CylinderGeometry(4, 4.3, 0.8, 32), M(0xd8d8d8), 0, 0.4, 10);
+const waterM = new THREE.MeshStandardMaterial({ color: 0x4fb3e8, transparent: true, opacity: 0.8, roughness: 0.1, metalness: 0.2 });
+mesh(new THREE.CylinderGeometry(3.7, 3.7, 0.1, 32), waterM, 0, 0.75, 10).castShadow = false;
+mesh(new THREE.CylinderGeometry(0.4, 0.6, 2.4, 12), M(0xd8d8d8), 0, 1.6, 10);
+mesh(new THREE.CylinderGeometry(1.6, 0.6, 0.5, 24), M(0xd8d8d8), 0, 2.9, 10);
+const jet = mesh(new THREE.ConeGeometry(0.5, 2.5, 12), new THREE.MeshStandardMaterial({ color: 0xbfe8ff, transparent: true, opacity: 0.6 }), 0, 4.3, 10);
+jet.castShadow = false;
+const flowers = new THREE.InstancedMesh(new THREE.SphereGeometry(0.28, 6, 4), M(0xffffff), 90);
+const fcols = [0xff4d6d, 0xffd23f, 0xff8fd8, 0xffffff, 0xa06cff], fm = new THREE.Matrix4(), fc = new THREE.Color();
+for (let i = 0; i < 90; i++) { const a = i / 90 * Math.PI * 2, r = 5.4 + rnd() * 1.4; fm.makeTranslation(Math.cos(a) * r, 0.3, 10 + Math.sin(a) * r); flowers.setMatrixAt(i, fm); flowers.setColorAt(i, fc.set(fcols[i % 5])); }
+scene.add(flowers);
+const benchM = M(0x8a5a32);
+[[7, 22, 0], [-7, 22, 0], [7, 40, 0], [-7, 40, 0]].forEach(([x, z]) => mesh(new THREE.BoxGeometry(1, 0.5, 3), benchM, x, 0.5, z));
+
+// ---------- Ferris wheel ----------
+const WC = V(34, 18, -25), R = 14;
+mesh(new THREE.BoxGeometry(28, 0.5, 13), M(0x8796a8), 34, 0.25, -25);
+const legM = M(0xe8ecf2, { metalness: 0.4, roughness: 0.4 });
+for (const s of [-1, 1]) {
+  beam(V(23, 0, -25 + s * 4.5), V(34, 18, -25 + s * 2.6), 0.35, legM);
+  beam(V(45, 0, -25 + s * 4.5), V(34, 18, -25 + s * 2.6), 0.35, legM);
+  beam(V(27, 8, -25 + s * 3.8), V(41, 8, -25 + s * 3.8), 0.18, legM);
+}
+const axle = mesh(new THREE.CylinderGeometry(0.5, 0.5, 5.8, 12), M(0x666f7a, { metalness: 0.7 }), 34, 18, -25); axle.rotation.x = Math.PI / 2;
+const wheel = new THREE.Group(); wheel.position.copy(WC); scene.add(wheel);
+const wheelM = M(0xf4f4f4, { metalness: 0.3, roughness: 0.4 });
+const bulbCols = [glow(0xff5a5a, 0.2, 3), glow(0xffe14d, 0.2, 3), glow(0x5ad8ff, 0.2, 3)];
+const smallBulb = new THREE.SphereGeometry(0.2, 8, 6);
+for (const z of [-1.4, 1.4]) {
+  mesh(new THREE.TorusGeometry(R, 0.22, 8, 96), wheelM, 0, 0, z, wheel);
+  mesh(new THREE.TorusGeometry(R * 0.5, 0.15, 8, 64), wheelM, 0, 0, z, wheel);
+  for (let i = 0; i < 16; i++) { const a = i / 16 * Math.PI * 2; beam(V(0, 0, z), V(Math.cos(a) * R, Math.sin(a) * R, z), 0.09, wheelM, wheel); }
+  for (let i = 0; i < 40; i++) { const a = i / 40 * Math.PI * 2; mesh(smallBulb, bulbCols[i % 3], Math.cos(a) * (R + 0.3), Math.sin(a) * (R + 0.3), z, wheel).castShadow = false; }
+}
+const hub = mesh(new THREE.CylinderGeometry(1.2, 1.2, 3.4, 20), M(0xd94a3d, { metalness: 0.4 }), 0, 0, 0, wheel); hub.rotation.x = Math.PI / 2;
+const gondolas = [];
+const gcols = [0xe63946, 0xf4a261, 0xe9c46a, 0x2a9d8f, 0x457b9d, 0x9b5de5, 0xf15bb5, 0x00bbf9, 0x06d6a0, 0xff7b00];
+const cabinG = new THREE.BoxGeometry(1.9, 1.7, 1.9), roofG = new THREE.ConeGeometry(1.5, 0.8, 4), rodG = new THREE.CylinderGeometry(0.06, 0.06, 0.8, 6), bandG = new THREE.BoxGeometry(1.96, 0.5, 1.96);
+const gWin = glow(0xfff0b0, 0.05, 1.8);
+for (let i = 0; i < 10; i++) {
+  const a = i / 10 * Math.PI * 2, x = Math.cos(a) * R, y = Math.sin(a) * R;
+  beam(V(x, y, -1.4), V(x, y, 1.4), 0.12, wheelM, wheel);
+  const g = new THREE.Group(); g.position.set(x, y, 0); wheel.add(g);
+  mesh(rodG, wheelM, 0, -0.4, 0, g);
+  mesh(roofG, M(0xffffff), 0, -0.85, 0, g).rotation.y = Math.PI / 4;
+  mesh(cabinG, M(gcols[i], { roughness: 0.5 }), 0, -2.1, 0, g);
+  mesh(bandG, gWin, 0, -1.8, 0, g).castShadow = false;
+  gondolas.push(g);
+}
+pLight(0xffeedd, 260, 45, 34, 18, -21);
+
+// ---------- Carousel ----------
+const CC = V(-22, 0, 18);
+mesh(new THREE.CylinderGeometry(9.2, 9.6, 0.8, 48), M(0xffffff, { map: stripes('#d94a3d', '#ffffff', 24) }), CC.x, 0.4, CC.z);
+const carousel = new THREE.Group(); carousel.position.set(CC.x, 0.8, CC.z); scene.add(carousel);
+mesh(new THREE.CylinderGeometry(8.6, 8.6, 0.3, 48), M(0xb07a45), 0, 0.15, 0, carousel);
+mesh(new THREE.CylinderGeometry(1.3, 1.3, 5.6, 24), M(0xffd166, { metalness: 0.5, roughness: 0.3 }), 0, 2.9, 0, carousel);
+mesh(new THREE.CylinderGeometry(9.6, 9.6, 0.9, 48), M(0xffffff, { map: stripes('#2a6fd9', '#ffd34d', 32) }), 0, 5.9, 0, carousel);
+mesh(new THREE.ConeGeometry(10, 3.4, 48), M(0xffffff, { map: stripes('#e63946', '#ffffff', 24) }), 0, 8.05, 0, carousel);
+mesh(new THREE.SphereGeometry(0.6, 16, 12), M(0xffd166, { metalness: 0.6, roughness: 0.3 }), 0, 10, 0, carousel);
+const carBulb = glow(0xfff3b0, 0.2, 3.2);
+for (let i = 0; i < 36; i++) { const a = i / 36 * Math.PI * 2; mesh(smallBulb, carBulb, Math.cos(a) * 9.7, 5.9, Math.sin(a) * 9.7, carousel).castShadow = false; }
+const goldM = M(0xffd166, { metalness: 0.7, roughness: 0.3 });
+const poleCG = new THREE.CylinderGeometry(0.07, 0.07, 5.2, 8), bodyG = new THREE.CapsuleGeometry(0.32, 0.9, 4, 8), legG = new THREE.BoxGeometry(0.12, 0.7, 0.12);
+const horses = [];
+const hcols = [0xffffff, 0x8b5a2b, 0xf2e2c4, 0x333333, 0xd9b38c, 0xffffff];
+for (let i = 0; i < 16; i++) {
+  const a = i / 16 * Math.PI * 2, r = i % 2 ? 6.4 : 4.2;
+  mesh(poleCG, goldM, Math.cos(a) * r, 2.9, Math.sin(a) * r, carousel);
+  const h = new THREE.Group(); h.position.set(Math.cos(a) * r, 1.8, Math.sin(a) * r); h.rotation.y = -a - Math.PI / 2; carousel.add(h);
+  const m = M(hcols[i % hcols.length], { roughness: 0.5 });
+  mesh(bodyG, m, 0, 0, 0, h).rotation.z = Math.PI / 2;
+  mesh(new THREE.BoxGeometry(0.25, 0.7, 0.3), m, 0.65, 0.35, 0, h).rotation.z = -0.5;
+  mesh(new THREE.BoxGeometry(0.55, 0.25, 0.28), m, 0.9, 0.72, 0, h);
+  for (const [x, z] of [[0.45, 0.15], [0.45, -0.15], [-0.45, 0.15], [-0.45, -0.15]]) mesh(legG, m, x, -0.5, z, h);
+  mesh(new THREE.BoxGeometry(0.5, 0.12, 0.7), M(gcols[i % 10]), 0, 0.33, 0, h);
+  mesh(new THREE.BoxGeometry(0.1, 0.5, 0.1), M(0x553311), -0.75, 0.05, 0, h).rotation.z = 0.6;
+  horses.push(h);
+}
+pLight(0xffd59a, 120, 22, 0, 4.2, 0, carousel);
+
+// ---------- Roller coaster ----------
+const loopPts = []; const lcx = -24, lcy = 11, LR = 8;
+for (let k = 0; k <= 8; k++) { const th = k / 8 * Math.PI * 2; loopPts.push(V(lcx - LR * Math.sin(th), lcy - LR * Math.cos(th), -42 - 6 * k / 8)); }
+const ctrl = [V(-48, 3, -18), V(-36, 3, -18), V(-26, 6, -18), V(-12, 20, -18), V(-4, 23, -18), V(4, 22, -21), V(8, 19, -28), V(5, 12, -36), V(-3, 4.5, -41), V(-14, 3, -42),
+  ...loopPts, V(-34, 3.2, -48), V(-46, 6, -48), V(-55, 7, -43), V(-58, 6, -34), V(-56, 4, -25), V(-52, 3, -19.5)];
+const coasterCurve = new THREE.CatmullRomCurve3(ctrl, true, 'centripetal');
+coasterCurve.arcLengthDivisions = 3000; coasterCurve.updateArcLengths();
+const L = coasterCurve.getLength();
+const N = 600, FT = [], FU = [], FS = [];
+let up = V(0, 1, 0);
+for (let i = 0; i <= N; i++) {
+  const T = coasterCurve.getTangentAt((i % N) / N);
+  up = up.clone().addScaledVector(T, -up.dot(T)).normalize();
+  FT.push(T); FU.push(up);
+}
+const twist = Math.atan2(new THREE.Vector3().crossVectors(FU[N], FU[0]).dot(FT[0]), FU[N].dot(FU[0]));
+for (let i = 0; i <= N; i++) { FU[i].applyAxisAngle(FT[i], twist * i / N); FS.push(new THREE.Vector3().crossVectors(FU[i], FT[i]).normalize()); }
+const PTS = []; for (let i = 0; i <= N; i++) PTS.push(coasterCurve.getPointAt((i % N) / N));
+const railL = [], railR = [], spine = [];
+for (let i = 0; i < N; i++) {
+  railL.push(PTS[i].clone().addScaledVector(FS[i], 0.55));
+  railR.push(PTS[i].clone().addScaledVector(FS[i], -0.55));
+  spine.push(PTS[i].clone().addScaledVector(FU[i], -0.45));
+}
+const railM = M(0xd62828, { metalness: 0.4, roughness: 0.35 }), spineM = M(0xf0f0f0, { metalness: 0.3, roughness: 0.4 });
+for (const [pts, r, m] of [[railL, 0.12, railM], [railR, 0.12, railM], [spine, 0.22, spineM]]) {
+  const t = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts, true), 1500, r, 7, true), m);
+  t.castShadow = true; scene.add(t);
+}
+const tieG = new THREE.BoxGeometry(1.3, 0.1, 0.22); tieG.translate(0, -0.1, 0);
+const tpG = new THREE.BoxGeometry(0.14, 0.35, 0.14); tpG.translate(0, -0.3, 0);
+const nT = N / 2, ties = new THREE.InstancedMesh(tieG, M(0x444a55), nT), tps = new THREE.InstancedMesh(tpG, spineM, nT);
+const tm = new THREE.Matrix4();
+for (let j = 0; j < nT; j++) { const i = j * 2; tm.makeBasis(FS[i], FU[i], FT[i]).setPosition(PTS[i]); ties.setMatrixAt(j, tm); tps.setMatrixAt(j, tm); }
+ties.castShadow = tps.castShadow = true; scene.add(ties, tps);
+const supM = M(0xe8e8e8, { metalness: 0.3, roughness: 0.5 }), footG = new THREE.CylinderGeometry(0.5, 0.6, 0.4, 10);
+for (let i = 0; i < N; i += 6) {
+  const p = PTS[i], U = FU[i];
+  if (U.y < 0.6) continue;
+  if (p.x > -35 && p.x < -13 && p.z < -39 && p.y > 4) continue;
+  const top = p.clone().addScaledVector(U, -0.6);
+  if (top.y < 0.8) continue;
+  beam(V(top.x, 0, top.z), top, 0.17, supM);
+  mesh(footG, M(0x9a9a9a), top.x, 0.2, top.z);
+}
+const cLightM = glow(0xffe9a8, 0.1, 3);
+const nL = Math.floor(N / 10) * 2, cLights = new THREE.InstancedMesh(new THREE.SphereGeometry(0.13, 6, 4), cLightM, nL);
+for (let j = 0, k = 0; j < N; j += 10) { for (const s of [0.75, -0.75]) { tm.makeTranslation(PTS[j].x + FS[j].x * s, PTS[j].y + FS[j].y * s, PTS[j].z + FS[j].z * s); cLights.setMatrixAt(k++, tm); } }
+scene.add(cLights);
+// station
+mesh(new THREE.BoxGeometry(14, 1.8, 3), M(0xcfc6b4), -41, 0.9, -14.5);
+for (const x of [-47, -35]) for (const z of [-21.5, -13.5]) mesh(new THREE.BoxGeometry(0.4, 7, 0.4), M(0x6b4a2f), x, 3.5, z);
+mesh(new THREE.BoxGeometry(15, 0.5, 9.5), M(0x2a6fd9), -41, 7.2, -17.5);
+mesh(new THREE.BoxGeometry(15.4, 0.3, 9.9), M(0xffd34d), -41, 6.85, -17.5);
+// train
+const cars = [];
+const carCols = [0xffd23f, 0x1d8fe0, 0x2ec27e, 0xff6b35];
+const skinM = M(0xf2c9a0), headLM = glow(0xfff6c0, 0.3, 4);
+for (let k = 0; k < 4; k++) {
+  const c = new THREE.Group(); scene.add(c);
+  mesh(new THREE.BoxGeometry(1.5, 0.3, 2.2), M(0x333333), 0, 0.32, 0, c);
+  mesh(new THREE.BoxGeometry(1.4, 0.7, 2.0), M(carCols[k], { roughness: 0.35, metalness: 0.2 }), 0, 0.8, 0, c);
+  mesh(new THREE.BoxGeometry(1.3, 0.6, 0.15), M(0x222222), 0, 1.3, -0.65, c);
+  for (const x of [-0.35, 0.35]) mesh(new THREE.SphereGeometry(0.22, 10, 8), skinM, x, 1.45, -0.1, c);
+  if (k === 0) {
+    const nose = mesh(new THREE.BoxGeometry(1.4, 0.5, 0.6), M(carCols[0]), 0, 0.7, 1.2, c); nose.rotation.x = 0.4;
+    for (const x of [-0.45, 0.45]) mesh(new THREE.SphereGeometry(0.13, 8, 6), headLM, x, 0.75, 1.5, c);
+  }
+  cars.push(c);
+}
+const _m = new THREE.Matrix4();
+function frameAt(u) {
+  u = ((u % 1) + 1) % 1;
+  const f = u * N, i = Math.min(N - 1, Math.floor(f)), k = f - i;
+  const T = coasterCurve.getTangentAt(u);
+  const U = FU[i].clone().lerp(FU[i + 1], k); U.addScaledVector(T, -U.dot(T)).normalize();
+  return { p: coasterCurve.getPointAt(u), T, U, S: new THREE.Vector3().crossVectors(U, T) };
+}
+function placeCar(car, u) {
+  const f = frameAt(u); car.position.copy(f.p);
+  _m.makeBasis(f.S, f.U, f.T); car.quaternion.setFromRotationMatrix(_m);
+}
+let progress = 0, speed = 6;
+function updateCoaster(dt) {
+  const f0 = frameAt(progress);
+  let target = 0.85 * Math.sqrt(Math.max(30, 19.6 * (25.5 - f0.p.y)));
+  if (f0.T.y > 0.1 && f0.p.x < -6 && f0.p.z > -22) target = 5;
+  speed += (target - speed) * Math.min(1, dt * 3);
+  progress = (progress + speed * dt / L) % 1;
+  cars.forEach((c, k) => placeCar(c, progress - k * 2.5 / L));
+}
+updateCoaster(0);
+
+// ---------- Sky details ----------
+const clouds = new THREE.Group(); scene.add(clouds);
+const cloudM = M(0xffffff, { roughness: 1 }), cg = new THREE.IcosahedronGeometry(1, 1);
+for (let i = 0; i < 9; i++) {
+  const c = new THREE.Group(); c.position.set(-150 + rnd() * 300, 70 + rnd() * 25, -150 + rnd() * 220);
+  for (let j = 0; j < 5; j++) { const s = mesh(cg, cloudM, j * 4 - 8, rnd() * 2, rnd() * 3, c); s.scale.setScalar(4 + rnd() * 3); s.castShadow = false; }
+  clouds.add(c);
+}
+const starsG = new THREE.BufferGeometry(), sp = [];
+for (let i = 0; i < 900; i++) { const a = rnd() * Math.PI * 2, b = 0.08 + rnd() * 1.4, r = 500; sp.push(Math.cos(a) * Math.cos(b) * r, Math.sin(b) * r, Math.sin(a) * Math.cos(b) * r); }
+starsG.setAttribute('position', new THREE.Float32BufferAttribute(sp, 3));
+const stars = new THREE.Points(starsG, new THREE.PointsMaterial({ color: 0xffffff, size: 2, sizeAttenuation: false, fog: false }));
+const moon = new THREE.Mesh(new THREE.SphereGeometry(12, 24, 16), new THREE.MeshBasicMaterial({ color: 0xfff6d8, fog: false }));
+moon.position.set(-200, 220, -360); stars.add(moon);
+stars.visible = false; scene.add(stars);
+
+// ---------- Day / Night ----------
+let night = false;
+const btn = document.getElementById('btn');
+function setNight(v) {
+  night = !!v;
+  scene.background = night ? skyN : skyD;
+  scene.fog.color.set(night ? 0x0b1030 : 0xcfe6f5);
+  hemi.intensity = night ? 0.12 : 0.9; hemi.color.set(night ? 0x4060a0 : 0xbfe3ff); hemi.groundColor.set(night ? 0x101820 : 0x6a8a4a);
+  sun.intensity = night ? 0.3 : 2.3; sun.color.set(night ? 0x8899ff : 0xfff2dd);
+  glowMats.forEach(g => g.m.emissiveIntensity = night ? g.n : g.d);
+  lamps.forEach(l => l.intensity = night ? l.userData.n : 0);
+  stars.visible = night; clouds.visible = !night;
+  btn.textContent = night ? '☀ 昼にする' : '🌙 夜にする';
+  renderer.render(scene, camera);
+}
+btn.addEventListener('click', () => setNight(!night));
+
+window.park = {
+  scene, camera, renderer, controls, wheel, gondolas, coasterCurve,
+  coasterCar: cars[0], coasterCars: cars,
+  getCoasterProgress: () => progress,
+  carousel, setNight, isNight: () => night
+};
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+const clock = new THREE.Clock(); let t = 0;
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.05); t += dt;
+  wheel.rotation.z += dt * 0.12;
+  for (const g of gondolas) g.rotation.z = -wheel.rotation.z;
+  carousel.rotation.y += dt * 0.55;
+  horses.forEach((h, i) => h.position.y = 1.8 + Math.sin(t * 2.2 + i * 1.3) * 0.35);
+  updateCoaster(dt);
+  jet.scale.y = 1 + Math.sin(t * 4) * 0.15;
+  clouds.children.forEach((c, i) => { c.position.x += dt * (1 + i % 3 * 0.5); if (c.position.x > 180) c.position.x = -180; });
+  controls.update();
+  renderer.render(scene, camera);
+});
+</script>
+</body>
+</html>
