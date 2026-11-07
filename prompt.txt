@@ -1,0 +1,30 @@
+Three.js (r169) で、見栄えのする 3D の遊園地の箱庭を、HTML ファイル 1 枚で作ってください。
+
+## 動く環境
+- インターネットにつながらない環境のブラウザで開きます。CDN・外部のフォントや画像・外部の API は使えません (テクスチャが要るなら canvas などでコードから作ってください)。
+- Three.js は同じ場所の ./three.module.js に、OrbitControls は ./addons/controls/OrbitControls.js にあります。次の import map をそのまま使ってください。
+  <script type="importmap">{"imports":{"three":"./three.module.js","three/addons/":"./addons/"}}</script>
+  読み込みは import * as THREE from 'three'; と import { OrbitControls } from 'three/addons/controls/OrbitControls.js'; の形で。
+- 画面はウィンドウいっぱいに描いてください (1920×1080 で確認します)。
+
+## 中身
+- 観覧車: ゴンドラ 8 個以上。輪がゆっくり回り、ゴンドラは輪が回っても常に水平を保つ。
+- ジェットコースター: 閉じた線路 (一周つながっている) の上を車両が走り続ける。線路には縦の宙返り (車両が上下逆さになるループ) を 1 つ以上入れる。線路の形がはっきり見えること。
+- メリーゴーランド: 回る。
+- 地面・道・木・柵・建物など、箱庭らしい周りの作り込み。
+- 昼と夜の切り替え: 夜は空が暗くなり、乗り物や街灯の明かりが見える。画面上のボタンと、下の park.setNight のどちらでも切り替わること。
+- カメラはマウスのドラッグで回せる (OrbitControls)。最初の視点で遊園地全体が見えること。
+
+## 検査用の口 (必須)
+自動の検査のため、window.park に次を入れてください。
+- park.scene / park.camera / park.renderer : Three.js のシーン・カメラ・レンダラー
+- park.wheel : 観覧車の回る部分 (Object3D)
+- park.gondolas : ゴンドラ本体の Object3D の配列 (8 個以上)
+- park.coasterCurve : 線路の中心線 (THREE.Curve。getPointAt(u) と getTangentAt(u) が使え、u が 0〜1 で一周する)
+- park.coasterCar : 先頭の車両 (Object3D)
+- park.getCoasterProgress() : 先頭車両の線路上の位置 (0〜1 の数)
+- park.carousel : メリーゴーランドの回る部分 (Object3D)
+- park.setNight(true / false) と park.isNight()
+
+## 返答の形
+HTML ファイルの中身だけを、```html のコードブロック 1 つで返してください。説明は要りません。

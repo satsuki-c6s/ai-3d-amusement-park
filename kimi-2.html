@@ -1,0 +1,859 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>ほしぞら遊園地</title>
+<style>
+  html,body{width:100%;height:100%;margin:0;overflow:hidden;background:#a9dcf2}
+  body{font-family:system-ui,-apple-system,"Segoe UI","Hiragino Sans","Yu Gothic",sans-serif}
+  canvas{display:block;width:100%;height:100%}
+  #title{
+    position:fixed;left:24px;top:22px;z-index:5;pointer-events:none;
+    color:#173b50;background:rgba(255,255,255,.78);border:1px solid rgba(255,255,255,.9);
+    border-radius:18px;padding:14px 20px;box-shadow:0 8px 30px rgba(25,66,80,.16);
+    backdrop-filter:blur(12px)
+  }
+  #title h1{font-size:22px;letter-spacing:.08em;margin:0 0 4px;font-weight:800}
+  #title p{font-size:12px;margin:0;opacity:.72;letter-spacing:.08em}
+  #nightButton{
+    position:fixed;right:24px;top:24px;z-index:6;border:1px solid rgba(255,255,255,.85);
+    border-radius:999px;padding:12px 20px;color:#173b50;background:rgba(255,255,255,.82);
+    box-shadow:0 8px 26px rgba(25,50,80,.18);font:700 14px system-ui;cursor:pointer;
+    backdrop-filter:blur(12px);transition:background .25s,color .25s,transform .2s
+  }
+  #nightButton:hover{transform:translateY(-2px)}
+  #nightButton.night{color:#f5ecff;background:rgba(30,35,72,.82);border-color:rgba(180,190,255,.35)}
+  #hint{
+    position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:5;pointer-events:none;
+    color:white;background:rgba(20,42,56,.46);border:1px solid rgba(255,255,255,.2);
+    border-radius:999px;padding:8px 16px;font-size:12px;letter-spacing:.05em;
+    text-shadow:0 1px 2px #234;backdrop-filter:blur(8px);white-space:nowrap
+  }
+</style>
+<script type="importmap">{"imports":{"three":"https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js","three/addons/":"https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"}}</script>
+</head>
+<body>
+<div id="title"><h1>ほしぞら遊園地</h1><p>HOSHIZORA PARK · MINIATURE WORLD</p></div>
+<button id="nightButton" type="button" aria-pressed="false">🌙 夜に切り替え</button>
+<div id="hint">ドラッグで回転 ・ ホイールでズーム ・ 右ドラッグで移動</div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const renderer = new THREE.WebGLRenderer({ antialias:true, powerPreference:'high-performance' });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.08;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+const daySky = new THREE.Color('#a9dcf2');
+const nightSky = new THREE.Color('#071329');
+scene.background = daySky.clone();
+scene.fog = new THREE.Fog(daySky.clone(), 72, 165);
+
+const camera = new THREE.PerspectiveCamera(42, innerWidth / innerHeight, 0.1, 320);
+camera.position.set(43, 35, 52);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 4, 0);
+controls.enableDamping = true;
+controls.dampingFactor = 0.065;
+controls.minDistance = 24;
+controls.maxDistance = 135;
+controls.minPolarAngle = 0.12;
+controls.maxPolarAngle = Math.PI / 2 - 0.035;
+controls.update();
+
+const hemi = new THREE.HemisphereLight('#dff5ff', '#668552', 1.65);
+scene.add(hemi);
+const sun = new THREE.DirectionalLight('#fff1d4', 2.65);
+sun.position.set(28, 46, 30);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.camera.left = -38;
+sun.shadow.camera.right = 38;
+sun.shadow.camera.top = 38;
+sun.shadow.camera.bottom = -38;
+sun.shadow.camera.near = 1;
+sun.shadow.camera.far = 115;
+sun.shadow.bias = -0.00035;
+sun.shadow.normalBias = 0.035;
+scene.add(sun, sun.target);
+
+const V = (x,y,z) => new THREE.Vector3(x,y,z);
+const clamp = THREE.MathUtils.clamp;
+const lerp = THREE.MathUtils.lerp;
+const unitCylinder = new THREE.CylinderGeometry(1,1,1,10);
+const yAxis = new THREE.Vector3(0,1,0);
+
+function material(color, roughness=0.75, metalness=0) {
+  return new THREE.MeshStandardMaterial({color, roughness, metalness});
+}
+function addBox(parent,w,h,d,x,y,z,mat) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w,h,d),mat);
+  m.position.set(x,y,z);
+  m.castShadow = m.receiveShadow = true;
+  parent.add(m);
+  return m;
+}
+function addCylinder(parent,rt,rb,h,x,y,z,mat,segments=20) {
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(rt,rb,h,segments),mat);
+  m.position.set(x,y,z);
+  m.castShadow = m.receiveShadow = true;
+  parent.add(m);
+  return m;
+}
+function beam(parent,a,b,r,mat) {
+  const direction = b.clone().sub(a);
+  const length = direction.length();
+  const m = new THREE.Mesh(unitCylinder,mat);
+  m.position.copy(a).add(b).multiplyScalar(0.5);
+  m.scale.set(r,length,r);
+  m.quaternion.setFromUnitVectors(yAxis,direction.normalize());
+  m.castShadow = m.receiveShadow = true;
+  parent.add(m);
+  return m;
+}
+function shadows(root) {
+  root.traverse(o => {
+    if(o.isMesh) {
+      o.castShadow = true;
+      o.receiveShadow = true;
+    }
+  });
+}
+
+let randomSeed = 928374;
+function rand() {
+  randomSeed |= 0;
+  randomSeed = randomSeed + 0x6D2B79F5 | 0;
+  let t = Math.imul(randomSeed ^ randomSeed >>> 15, 1 | randomSeed);
+  t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+  return ((t ^ t >>> 14) >>> 0) / 4294967296;
+}
+
+const glowEntries = [];
+const nightLights = [];
+function glowMaterial(color,power=2.5) {
+  const m = new THREE.MeshStandardMaterial({
+    color, emissive:color, emissiveIntensity:0.18, roughness:0.3, metalness:0.05
+  });
+  glowEntries.push({material:m,power});
+  return m;
+}
+function addNightLight(parent,color,power,distance,x,y,z) {
+  const light = new THREE.PointLight(color,0,distance,2);
+  light.position.set(x,y,z);
+  parent.add(light);
+  nightLights.push({light,power});
+  return light;
+}
+
+const cream = material('#fff0cf');
+const white = material('#fff8e8');
+const darkWood = material('#574438');
+const supportMat = material('#315969',0.55,0.25);
+const gold = material('#e9b84d',0.35,0.45);
+const metalDark = material('#263942',0.45,0.45);
+const windowGlow = glowMaterial('#ffd585',2.1);
+
+/* 地面 */
+const grassCanvas = document.createElement('canvas');
+grassCanvas.width = grassCanvas.height = 256;
+const gc = grassCanvas.getContext('2d');
+gc.fillStyle = '#77ad62';
+gc.fillRect(0,0,256,256);
+for(let i=0;i<3200;i++) {
+  const light = rand() > 0.48;
+  gc.fillStyle = light ? 'rgba(208,230,133,.16)' : 'rgba(31,94,51,.13)';
+  const s = 0.5 + rand()*1.6;
+  gc.fillRect(rand()*256,rand()*256,s,s);
+}
+const grassTexture = new THREE.CanvasTexture(grassCanvas);
+grassTexture.wrapS = grassTexture.wrapT = THREE.RepeatWrapping;
+grassTexture.repeat.set(12,10);
+grassTexture.colorSpace = THREE.SRGBColorSpace;
+grassTexture.anisotropy = Math.min(8,renderer.capabilities.getMaxAnisotropy());
+
+addBox(scene,60,1.7,48,0,-0.92,0,material('#624c3d'));
+addBox(scene,59.3,0.34,47.3,0,-0.02,0,
+  new THREE.MeshStandardMaterial({map:grassTexture,color:'#ffffff',roughness:1}));
+addBox(scene,60.5,0.25,48.5,0,-1.78,0,material('#352f35',0.6,0.15));
+
+const pathMat = material('#e8cf9d',0.98);
+const pathEdgeMat = material('#c7a979',1);
+
+function makeRibbon(points,width,mat=pathMat,y=0.18) {
+  const curve = new THREE.CatmullRomCurve3(points.map(p => V(p[0],y,p[1])),false,'centripetal');
+  const segments = Math.max(24,points.length*14);
+  const positions = [], uvs = [], indices = [];
+  for(let i=0;i<=segments;i++) {
+    const u = i/segments;
+    const p = curve.getPoint(u);
+    const t = curve.getTangent(u);
+    const side = V(t.z,0,-t.x).normalize().multiplyScalar(width/2);
+    const a = p.clone().add(side), b = p.clone().sub(side);
+    positions.push(a.x,a.y,a.z,b.x,b.y,b.z);
+    uvs.push(0,u*6,1,u*6);
+    if(i<segments) {
+      const k=i*2;
+      indices.push(k,k+1,k+2,k+1,k+3,k+2);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position',new THREE.Float32BufferAttribute(positions,3));
+  geo.setAttribute('uv',new THREE.Float32BufferAttribute(uvs,2));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  const m = new THREE.Mesh(geo,mat);
+  m.receiveShadow = true;
+  scene.add(m);
+  return m;
+}
+
+makeRibbon([[0,22],[0,17],[0,13],[0,8]],4.3);
+makeRibbon([[0,10],[-5,9],[-9,8],[-13,8]],3.1);
+makeRibbon([[0,8],[-4,4],[-9,1],[-15,-1]],3.0);
+makeRibbon([[0,8],[6,9],[12,11],[19,12]],3.1);
+makeRibbon([[1,5],[6,2],[11,0],[16,-1]],2.6);
+makeRibbon([[-1,14],[-7,16],[-13,17],[-18,18]],2.1);
+
+const plaza = new THREE.Mesh(new THREE.CircleGeometry(4.8,64),pathMat);
+plaza.rotation.x = -Math.PI/2;
+plaza.position.set(0,0.185,11);
+plaza.receiveShadow = true;
+scene.add(plaza);
+const plazaRing = new THREE.Mesh(new THREE.TorusGeometry(4.75,0.12,8,64),pathEdgeMat);
+plazaRing.rotation.x = Math.PI/2;
+plazaRing.position.set(0,0.22,11);
+scene.add(plazaRing);
+
+/* 看板はすべて Canvas から生成 */
+function labelTexture(text,bg='#e95762',fg='#fff8df',sub='') {
+  const c = document.createElement('canvas');
+  c.width=1024; c.height=256;
+  const x=c.getContext('2d');
+  x.fillStyle=bg;
+  x.beginPath();
+  x.moveTo(45,8); x.lineTo(979,8); x.quadraticCurveTo(1016,8,1016,45);
+  x.lineTo(1016,211); x.quadraticCurveTo(1016,248,979,248);
+  x.lineTo(45,248); x.quadraticCurveTo(8,248,8,211);
+  x.lineTo(8,45); x.quadraticCurveTo(8,8,45,8); x.closePath(); x.fill();
+  x.strokeStyle='rgba(255,255,255,.65)'; x.lineWidth=8; x.stroke();
+  x.fillStyle=fg; x.textAlign='center'; x.textBaseline='middle';
+  x.font=`800 ${sub?102:122}px system-ui,sans-serif`;
+  x.fillText(text,512,sub?105:132);
+  if(sub) {
+    x.font='600 37px system-ui,sans-serif';
+    x.fillText(sub,512,194);
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace=THREE.SRGBColorSpace;
+  tex.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy());
+  return tex;
+}
+function makeLabel(text,w,h,bg,fg,sub='') {
+  const mat = new THREE.MeshBasicMaterial({
+    map:labelTexture(text,bg,fg,sub),transparent:true,side:THREE.DoubleSide,toneMapped:false
+  });
+  return new THREE.Mesh(new THREE.PlaneGeometry(w,h),mat);
+}
+
+/* 噴水 */
+const fountain = new THREE.Group();
+fountain.position.set(0,0,11);
+scene.add(fountain);
+addCylinder(fountain,2.15,2.3,0.5,0,0.42,0,cream,48);
+addCylinder(fountain,1.9,1.9,0.12,0,0.7,0,
+  new THREE.MeshStandardMaterial({color:'#58c4df',roughness:0.18,metalness:0.12}),48);
+addCylinder(fountain,0.32,0.45,1.75,0,1.35,0,cream,24);
+addCylinder(fountain,0.9,0.65,0.22,0,2.05,0,cream,32);
+const fountainOrb = new THREE.Mesh(new THREE.SphereGeometry(0.32,20,14),gold);
+fountainOrb.position.y=2.55; fountain.add(fountainOrb);
+const waterJetMat = new THREE.MeshStandardMaterial({
+  color:'#b8f3ff',emissive:'#4baac4',emissiveIntensity:0.22,roughness:0.1,transparent:true,opacity:0.78
+});
+for(let i=0;i<8;i++) {
+  const a=i*Math.PI/4;
+  const curve=new THREE.QuadraticBezierCurve3(
+    V(Math.cos(a)*0.25,2.1,Math.sin(a)*0.25),
+    V(Math.cos(a)*1.0,2.8,Math.sin(a)*1.0),
+    V(Math.cos(a)*1.55,0.82,Math.sin(a)*1.55)
+  );
+  fountain.add(new THREE.Mesh(new THREE.TubeGeometry(curve,20,0.025,5,false),waterJetMat));
+}
+shadows(fountain);
+
+/* 柵 */
+const fenceMat = material('#f5e6ca');
+function fenceLine(x1,z1,x2,z2,spacing=2) {
+  const dx=x2-x1,dz=z2-z1,len=Math.hypot(dx,dz);
+  const n=Math.ceil(len/spacing);
+  for(let i=0;i<=n;i++) {
+    const t=i/n;
+    addBox(scene,0.16,1.15,0.16,lerp(x1,x2,t),0.72,lerp(z1,z2,t),fenceMat);
+  }
+  for(const y of [0.52,0.96]) {
+    const rail=addBox(scene,len,0.11,0.11,(x1+x2)/2,y,(z1+z2)/2,fenceMat);
+    rail.rotation.y=-Math.atan2(dz,dx);
+  }
+}
+fenceLine(-28,-22,28,-22);
+fenceLine(-28,-22,-28,22);
+fenceLine(28,-22,28,22);
+fenceLine(-28,22,-4,22);
+fenceLine(4,22,28,22);
+
+/* 木 */
+const trunkMat = material('#765137');
+const leafMats = [material('#3d8852'),material('#55a85c'),material('#74ad54'),material('#34734e')];
+function tree(x,z,s=1,type=0) {
+  const g=new THREE.Group();
+  g.position.set(x,0.15,z);
+  scene.add(g);
+  addCylinder(g,0.16*s,0.23*s,2.1*s,0,1.05*s,0,trunkMat,9);
+  if(type===1) {
+    for(let i=0;i<3;i++) {
+      const crown=new THREE.Mesh(new THREE.ConeGeometry((1.25-i*0.18)*s,2.25*s,9),leafMats[(i+1)%leafMats.length]);
+      crown.position.y=(2.1+i*0.9)*s;
+      crown.castShadow=crown.receiveShadow=true;
+      g.add(crown);
+    }
+  } else {
+    const offsets=[[0,2.55,0],[-.65,2.35,.15],[.58,2.42,.25],[.05,2.45,-.55]];
+    offsets.forEach((p,i)=>{
+      const leaf=new THREE.Mesh(new THREE.IcosahedronGeometry((i?0.9:1.15)*s,1),leafMats[i%leafMats.length]);
+      leaf.position.set(p[0]*s,p[1]*s,p[2]*s);
+      leaf.castShadow=leaf.receiveShadow=true;
+      g.add(leaf);
+    });
+  }
+}
+[
+ [-25,-18,1.15,1],[-20,-19,1,0],[-10,-19,1.1,1],[0,-19,.9,0],[12,-19,1.1,1],
+ [24,-17,1.15,0],[-26,-11,1.05,0],[-26,0,1.1,1],[-26,10,.9,0],[-24,18,1.05,1],
+ [26,-11,1.1,1],[26,0,1,0],[26,10,1.05,0],[24,18,1.15,1],[-18,18,.9,0],
+ [-11,19,1.05,1],[15,19,.85,0],[21,18,.9,0],[-22,4,.75,0],[24,6,.8,1]
+].forEach(p=>tree(...p));
+
+/* 街灯 */
+const lampGlow = glowMaterial('#ffd88c',3.5);
+function streetLamp(x,z,realLight=true) {
+  const g=new THREE.Group();
+  g.position.set(x,0.15,z);
+  scene.add(g);
+  addCylinder(g,0.075,0.12,2.85,0,1.43,0,metalDark,10);
+  addCylinder(g,0.25,0.32,0.12,0,0.08,0,metalDark,12);
+  const bulb=new THREE.Mesh(new THREE.SphereGeometry(0.24,16,12),lampGlow);
+  bulb.position.y=3.02; g.add(bulb);
+  const cap=new THREE.Mesh(new THREE.ConeGeometry(0.38,0.28,12),metalDark);
+  cap.position.y=3.34; g.add(cap);
+  if(realLight) addNightLight(g,'#ffd397',15,10,0,2.9,0);
+  shadows(g);
+}
+[
+ [-3,17],[3,17],[-3.8,8],[3.8,8],[-8,2],[-19,0],[8,11],[17,11],[23,8]
+].forEach((p,i)=>streetLamp(p[0],p[1],i<7));
+
+/* 建物 */
+function building(x,z,w,d,h,bodyColor,roofColor,name) {
+  const g=new THREE.Group();
+  g.position.set(x,0.15,z);
+  scene.add(g);
+  const wall=material(bodyColor);
+  addBox(g,w,h,d,0,h/2,0,wall);
+  const roof=new THREE.Mesh(new THREE.ConeGeometry(1,1,4),material(roofColor));
+  roof.scale.set((w+0.8)*0.73,1.65,(d+0.8)*0.73);
+  roof.rotation.y=Math.PI/4;
+  roof.position.y=h+0.82;
+  g.add(roof);
+  addBox(g,w+0.25,0.18,d+0.25,0,h+0.02,0,cream);
+  addBox(g,w*0.18,h*0.47,0.08,0,h*0.235,d/2+0.045,darkWood);
+  for(const sx of [-1,1]) {
+    addBox(g,w*0.2,h*0.25,0.07,sx*w*0.29,h*0.57,d/2+0.05,windowGlow);
+    addBox(g,w*0.22,0.08,0.12,sx*w*0.29,h*0.57-0.02,d/2+0.09,cream);
+  }
+  if(name) {
+    const sign=makeLabel(name,w*0.72,0.75,roofColor,'#fff7dc');
+    sign.position.set(0,h*0.88,d/2+0.09);
+    g.add(sign);
+  }
+  addNightLight(g,'#ffbd69',8,7,0,h*0.65,d/2+0.5);
+  shadows(g);
+  return g;
+}
+building(-5.4,19.3,3.6,3.1,3.0,'#f4bb62','#d6535e','TICKETS');
+building(5.4,19.3,3.6,3.1,3.0,'#7bc5c4','#d6535e','TICKETS');
+building(19,14.4,7,5.2,4.2,'#f3c9ae','#8d5275','SWEETS');
+building(10.2,15.9,5.2,4.1,3.4,'#a7d3bc','#367d77','SHOP');
+
+/* 入口アーチ */
+const entrance=new THREE.Group();
+entrance.position.set(0,0.15,21.1);
+scene.add(entrance);
+addBox(entrance,0.65,4.2,0.65,-3.1,2.1,0,cream);
+addBox(entrance,0.65,4.2,0.65,3.1,2.1,0,cream);
+addBox(entrance,6.8,0.28,0.55,0,4.18,0,gold);
+const entranceSign=makeLabel('HOSHI PARK',6.2,1.55,'#d94d65','#fff5cf','ほしぞら遊園地');
+entranceSign.position.set(0,4.55,0.34);
+entrance.add(entranceSign);
+for(const x of [-3.1,3.1]) {
+  const orb=new THREE.Mesh(new THREE.SphereGeometry(0.25,16,12),lampGlow);
+  orb.position.set(x,4.45,0);
+  entrance.add(orb);
+}
+addNightLight(entrance,'#ffd08a',22,12,0,4.2,1);
+shadows(entrance);
+
+/* ベンチと植木鉢 */
+function bench(x,z,rotation=0) {
+  const g=new THREE.Group();
+  g.position.set(x,0.2,z); g.rotation.y=rotation; scene.add(g);
+  addBox(g,2.0,0.18,0.62,0,0.65,0,darkWood);
+  addBox(g,2.0,0.75,0.14,0,1.05,-0.32,darkWood);
+  for(const sx of [-.72,.72]) {
+    addBox(g,.13,.65,.13,sx,.32,-.18,metalDark);
+    addBox(g,.13,.65,.13,sx,.32,.18,metalDark);
+  }
+}
+bench(-5.2,12,Math.PI/2);
+bench(5.2,12,-Math.PI/2);
+bench(-7,17,0);
+bench(15,10,Math.PI);
+
+const flowerColors=['#ff7f91','#ffd466','#f6a5dd','#ffffff'];
+function planter(x,z) {
+  addCylinder(scene,0.75,0.6,0.45,x,0.4,z,material('#b76e50'),16);
+  for(let i=0;i<11;i++) {
+    const a=rand()*Math.PI*2,r=rand()*0.57;
+    const stem=V(x+Math.cos(a)*r,0.78+rand()*.18,z+Math.sin(a)*r);
+    beam(scene,V(stem.x,.58,stem.z),stem,.018,leafMats[0]);
+    const f=new THREE.Mesh(new THREE.SphereGeometry(.11,8,6),material(flowerColors[i%flowerColors.length]));
+    f.position.copy(stem); scene.add(f);
+  }
+}
+planter(-4.2,14.7); planter(4.2,14.7); planter(-4.2,7.5); planter(4.2,7.5);
+
+/* 観覧車 */
+const ferrisRoot=new THREE.Group();
+scene.add(ferrisRoot);
+const ferrisCenter=V(-15,10,-8);
+addBox(ferrisRoot,11,0.4,4.4,-15,0.38,-8,material('#d8bd91'));
+for(const zo of [-0.95,0.95]) {
+  beam(ferrisRoot,V(-20,0.55,-8+zo),V(-15,10,-8+zo),0.19,supportMat);
+  beam(ferrisRoot,V(-10,0.55,-8+zo),V(-15,10,-8+zo),0.19,supportMat);
+  addBox(ferrisRoot,2.0,.25,1.1,-20,.35,-8+zo,cream);
+  addBox(ferrisRoot,2.0,.25,1.1,-10,.35,-8+zo,cream);
+}
+const axle=addCylinder(ferrisRoot,.32,.32,3.0,-15,10,-8,gold,24);
+axle.rotation.x=Math.PI/2;
+
+const wheel=new THREE.Group();
+wheel.position.copy(ferrisCenter);
+scene.add(wheel);
+const wheelR=7.25;
+const rimMat=material('#f6eee0',0.35,0.4);
+for(const z of [-.48,.48]) {
+  const rim=new THREE.Mesh(new THREE.TorusGeometry(wheelR,.13,10,96),rimMat);
+  rim.position.z=z; wheel.add(rim);
+  for(let i=0;i<10;i++) {
+    const a=i*Math.PI*2/10;
+    beam(wheel,V(0,0,z),V(Math.cos(a)*wheelR,Math.sin(a)*wheelR,z),.055,rimMat);
+  }
+}
+const hub=new THREE.Mesh(new THREE.CylinderGeometry(.72,.72,1.35,24),material('#e75d67',.4,.25));
+hub.rotation.x=Math.PI/2; wheel.add(hub);
+
+const ferrisGlowMats=[
+  glowMaterial('#ff6c82',3.2),glowMaterial('#ffd35d',3.2),
+  glowMaterial('#65dcff',3.2),glowMaterial('#b68cff',3.2)
+];
+for(let i=0;i<40;i++) {
+  const a=i*Math.PI*2/40;
+  const bulb=new THREE.Mesh(new THREE.SphereGeometry(.105,8,6),ferrisGlowMats[i%4]);
+  bulb.position.set(Math.cos(a)*wheelR,Math.sin(a)*wheelR,.57);
+  wheel.add(bulb);
+}
+
+const gondolas=[];
+const gondolaColors=['#e85667','#f2ad45','#45a8c6','#8b6bc2','#55af76'];
+for(let i=0;i<10;i++) {
+  const a=i*Math.PI*2/10+Math.PI/2;
+  const gondola=new THREE.Group();
+  gondola.position.set(Math.cos(a)*wheelR,Math.sin(a)*wheelR,0);
+  wheel.add(gondola);
+  beam(gondola,V(0,0,0),V(0,-.62,0),.045,metalDark);
+  const colorMat=material(gondolaColors[i%gondolaColors.length],.48,.12);
+  addBox(gondola,1.28,.72,1.02,0,-1.16,0,colorMat);
+  addBox(gondola,1.4,.12,1.12,0,-.77,0,cream);
+  addBox(gondola,1.05,.38,.035,0,-1.04,.528,windowGlow);
+  addBox(gondola,.07,.5,1.06,-.58,-1.03,0,cream);
+  addBox(gondola,.07,.5,1.06,.58,-1.03,0,cream);
+  const roof=new THREE.Mesh(new THREE.ConeGeometry(.93,.38,4),colorMat);
+  roof.rotation.y=Math.PI/4;
+  roof.scale.z=.78;
+  roof.position.y=-.55;
+  gondola.add(roof);
+  gondolas.push(gondola);
+}
+const ferrisSign=makeLabel('FERRIS WHEEL',4.5,.85,'#397e91','#fff4d5');
+ferrisSign.position.set(-15,1.2,-5.72);
+scene.add(ferrisSign);
+addNightLight(scene,'#8bcfff',42,24,-15,10,-6.5);
+shadows(ferrisRoot);
+shadows(wheel);
+
+/* メリーゴーランド */
+addCylinder(scene,4.5,4.7,.38,-12,.35,8,material('#c79b70'),48);
+const carousel=new THREE.Group();
+carousel.position.set(-12,0.15,8);
+scene.add(carousel);
+addCylinder(carousel,4.15,4.25,.38,0,.45,0,material('#f2d179'),48);
+addCylinder(carousel,.24,.3,4.6,0,2.75,0,gold,20);
+const carouselRoof=new THREE.Mesh(new THREE.ConeGeometry(4.55,2.0,24),material('#d95870',.5,.08));
+carouselRoof.position.y=5.15;
+carousel.add(carouselRoof);
+addCylinder(carousel,4.25,4.25,.18,0,4.25,0,cream,48);
+const finial=new THREE.Mesh(new THREE.SphereGeometry(.3,16,12),gold);
+finial.position.y=6.28; carousel.add(finial);
+
+const horseMat=material('#fff2d7');
+const horseAccent=material('#4b9bad');
+const horses=[];
+for(let i=0;i<8;i++) {
+  const a=i*Math.PI/4;
+  const hg=new THREE.Group();
+  hg.position.set(Math.cos(a)*2.8,2.15,Math.sin(a)*2.8);
+  hg.rotation.y=-a;
+  carousel.add(hg);
+  beam(hg,V(0,-1.5,0),V(0,2.05,0),.04,gold);
+  const body=new THREE.Mesh(new THREE.SphereGeometry(.55,14,10),horseMat);
+  body.scale.set(1.15,.58,.52); hg.add(body);
+  const head=new THREE.Mesh(new THREE.SphereGeometry(.27,12,9),horseMat);
+  head.position.set(.55,.28,0); hg.add(head);
+  const mane=addBox(hg,.35,.12,.36,.38,.38,0,horseAccent);
+  mane.rotation.z=-.35;
+  for(const x of [-.3,.3]) for(const z of [-.17,.17]) {
+    beam(hg,V(x,-.16,z),V(x+(x>0?.12:-.12),-.7,z),.045,horseMat);
+  }
+  hg.userData.baseY=hg.position.y;
+  hg.userData.phase=a;
+  horses.push(hg);
+}
+for(let i=0;i<24;i++) {
+  const a=i*Math.PI*2/24;
+  const bulb=new THREE.Mesh(new THREE.SphereGeometry(.105,8,6),ferrisGlowMats[i%4]);
+  bulb.position.set(Math.cos(a)*4.12,4.18,Math.sin(a)*4.12);
+  carousel.add(bulb);
+}
+addNightLight(carousel,'#ffb38a',34,17,0,3.4,0);
+shadows(carousel);
+
+/* ジェットコースター：垂直ループ＋外周コース */
+class ParkCoasterCurve extends THREE.Curve {
+  constructor() {
+    super();
+    this.loopFraction=.38;
+    this.outer=new THREE.CatmullRomCurve3([
+      V(7,2,-8),V(13,2,-8),V(18,2.2,-8),V(22,4.5,-4),
+      V(22,6,1),V(19,4.5,5),V(13,2.4,7),V(6,3.2,7),
+      V(0,5.5,5),V(-2,6,1),V(-2,4,-4),V(0,2,-8),V(7,2,-8)
+    ],false,'centripetal',.5);
+    this.arcLengthDivisions=1600;
+    this.updateArcLengths();
+  }
+  getPoint(t,target=new THREE.Vector3()) {
+    if(t<=this.loopFraction) {
+      const a=t/this.loopFraction*Math.PI*2;
+      return target.set(7+4.5*Math.sin(a),2+4.5*(1-Math.cos(a)),-8);
+    }
+    return this.outer.getPoint((t-this.loopFraction)/(1-this.loopFraction),target);
+  }
+}
+const coasterCurve=new ParkCoasterCurve();
+const FRAME_COUNT=480;
+const frameUps=[],frameTangents=[],frameSides=[];
+for(let i=0;i<FRAME_COUNT;i++) frameTangents.push(coasterCurve.getTangentAt(i/FRAME_COUNT).normalize());
+for(let i=0;i<FRAME_COUNT;i++) {
+  const t=frameTangents[i];
+  const up=new THREE.Vector3();
+  if(i===0) up.set(0,1,0);
+  else {
+    const q=new THREE.Quaternion().setFromUnitVectors(frameTangents[i-1],t);
+    up.copy(frameUps[i-1]).applyQuaternion(q);
+  }
+  up.addScaledVector(t,-up.dot(t)).normalize();
+  if(up.lengthSq()<.1) up.set(0,1,0).addScaledVector(t,-t.y).normalize();
+  frameUps.push(up);
+}
+/* 閉曲線の継ぎ目でフレームがねじれないよう補正 */
+{
+  const q=new THREE.Quaternion().setFromUnitVectors(
+    frameTangents[FRAME_COUNT-1],frameTangents[0]
+  );
+  const endUp=frameUps[FRAME_COUNT-1].clone().applyQuaternion(q);
+  endUp.addScaledVector(frameTangents[0],-endUp.dot(frameTangents[0])).normalize();
+  const cross=new THREE.Vector3().crossVectors(frameUps[0],endUp);
+  const angle=Math.atan2(frameTangents[0].dot(cross),frameUps[0].dot(endUp));
+  for(let i=0;i<FRAME_COUNT;i++) {
+    frameUps[i].applyAxisAngle(frameTangents[i],-angle*i/FRAME_COUNT).normalize();
+  }
+}
+for(let i=0;i<FRAME_COUNT;i++) {
+  frameSides.push(new THREE.Vector3().crossVectors(frameUps[i],frameTangents[i]).normalize());
+}
+function trackFrame(u) {
+  u=((u%1)+1)%1;
+  const f=u*FRAME_COUNT;
+  const i=Math.floor(f)%FRAME_COUNT;
+  const j=(i+1)%FRAME_COUNT;
+  const a=f-Math.floor(f);
+  const p=coasterCurve.getPointAt(u);
+  const tangent=coasterCurve.getTangentAt(u).normalize();
+  const up=frameUps[i].clone().lerp(frameUps[j],a).normalize();
+  up.addScaledVector(tangent,-up.dot(tangent)).normalize();
+  const side=new THREE.Vector3().crossVectors(up,tangent).normalize();
+  return {p,tangent,up,side};
+}
+
+const coasterRoot=new THREE.Group();
+scene.add(coasterRoot);
+const railMat=new THREE.MeshStandardMaterial({
+  color:'#e84c4f',emissive:'#8d101b',emissiveIntensity:.08,roughness:.34,metalness:.48
+});
+glowEntries.push({material:railMat,power:.32});
+function makeRail(offset) {
+  const points=[];
+  for(let i=0;i<240;i++) {
+    const f=trackFrame(i/240);
+    points.push(f.p.clone().addScaledVector(f.side,offset));
+  }
+  const c=new THREE.CatmullRomCurve3(points,true,'centripetal',.5);
+  const rail=new THREE.Mesh(new THREE.TubeGeometry(c,600,.075,7,true),railMat);
+  rail.castShadow=rail.receiveShadow=true;
+  coasterRoot.add(rail);
+}
+makeRail(-.46);
+makeRail(.46);
+
+const tieCount=160;
+const ties=new THREE.InstancedMesh(
+  new THREE.BoxGeometry(1.18,.13,.2),material('#f0d4a0',.65,.15),tieCount
+);
+const tempMatrix=new THREE.Matrix4();
+const tempQuat=new THREE.Quaternion();
+for(let i=0;i<tieCount;i++) {
+  const f=trackFrame(i/tieCount);
+  tempMatrix.makeBasis(f.side,f.up,f.tangent);
+  tempQuat.setFromRotationMatrix(tempMatrix);
+  tempMatrix.compose(f.p.clone().addScaledVector(f.up,-.13),tempQuat,V(1,1,1));
+  ties.setMatrixAt(i,tempMatrix);
+}
+ties.instanceMatrix.needsUpdate=true;
+ties.castShadow=ties.receiveShadow=true;
+coasterRoot.add(ties);
+
+for(let i=0;i<32;i++) {
+  const u=i/32;
+  const f=trackFrame(u),p=f.p;
+  const inLoop=Math.abs(p.z+8)<.02 && p.x>2.4 && p.x<11.6 && p.y>2.3;
+  if(inLoop && (p.y>7 || Math.abs(p.x-7)<2.4)) continue;
+  beam(coasterRoot,V(p.x,.18,p.z),V(p.x,p.y-.22,p.z),.085,supportMat);
+  addCylinder(coasterRoot,.24,.28,.16,p.x,.25,p.z,cream,12);
+  if(p.y>5 && !inLoop) {
+    beam(coasterRoot,V(p.x-.55,.2,p.z),V(p.x,p.y-.3,p.z),.045,supportMat);
+  }
+}
+
+/* コースター駅 */
+const station=new THREE.Group();
+station.position.set(14,0,-10);
+coasterRoot.add(station);
+addBox(station,8,.4,2.3,0,1.55,0,material('#c8b18c'));
+for(const x of [-3.5,3.5]) for(const z of [-.9,.9]) {
+  addBox(station,.13,3.3,.13,x,3.15,z,supportMat);
+}
+addBox(station,8.5,.28,2.8,0,4.85,0,material('#397f8b'));
+const stationSign=makeLabel('SKY LOOP',4.5,.9,'#d94d50','#fff3cf');
+stationSign.position.set(0,4.15,1.43);
+station.add(stationSign);
+addNightLight(station,'#ffd08a',18,11,0,4.2,.5);
+
+/* 連結車両 */
+function createCoasterCar(color,lead=false) {
+  const g=new THREE.Group();
+  const bodyMat=material(color,.38,.25);
+  addBox(g,.96,.48,1.42,0,.35,0,bodyMat);
+  addBox(g,1.02,.12,1.5,0,.06,0,metalDark);
+  addBox(g,.78,.34,.72,0,.7,-.2,material('#453b54'));
+  addBox(g,.82,.12,.18,0,.82,.18,gold);
+  for(const x of [-.48,.48]) for(const z of [-.45,.45]) {
+    const w=new THREE.Mesh(new THREE.CylinderGeometry(.13,.13,.1,12),metalDark);
+    w.rotation.z=Math.PI/2;
+    w.position.set(x,-.02,z);
+    g.add(w);
+  }
+  for(const x of [-.2,.2]) {
+    const head=new THREE.Mesh(new THREE.SphereGeometry(.15,12,9),material('#e9ae83'));
+    head.position.set(x,1.03,-.18);
+    g.add(head);
+  }
+  if(lead) {
+    for(const x of [-.28,.28]) {
+      const lamp=new THREE.Mesh(new THREE.SphereGeometry(.09,10,8),lampGlow);
+      lamp.position.set(x,.38,.735);
+      g.add(lamp);
+    }
+  }
+  shadows(g);
+  scene.add(g);
+  return g;
+}
+const train=[
+  createCoasterCar('#e8404d',true),
+  createCoasterCar('#f2a63b'),
+  createCoasterCar('#3b9fc0'),
+  createCoasterCar('#7a65b5')
+];
+let coasterProgress=.39;
+const carSpacing=1.5/coasterCurve.getLength();
+function updateTrain() {
+  for(let i=0;i<train.length;i++) {
+    const u=(coasterProgress-i*carSpacing+1)%1;
+    const f=trackFrame(u);
+    train[i].position.copy(f.p).addScaledVector(f.up,.29);
+    tempMatrix.makeBasis(f.side,f.up,f.tangent);
+    train[i].quaternion.setFromRotationMatrix(tempMatrix);
+  }
+}
+updateTrain();
+shadows(coasterRoot);
+
+/* 空・星・雲 */
+const starPositions=[];
+for(let i=0;i<650;i++) {
+  const a=rand()*Math.PI*2;
+  const r=75+rand()*70;
+  starPositions.push(Math.cos(a)*r,25+rand()*85,Math.sin(a)*r);
+}
+const starGeo=new THREE.BufferGeometry();
+starGeo.setAttribute('position',new THREE.Float32BufferAttribute(starPositions,3));
+const starMat=new THREE.PointsMaterial({
+  color:'#fff4d6',size:.42,sizeAttenuation:true,transparent:true,opacity:0,
+  depthWrite:false,fog:false
+});
+const stars=new THREE.Points(starGeo,starMat);
+scene.add(stars);
+
+const moonMat=new THREE.MeshBasicMaterial({color:'#fff1c5',transparent:true,opacity:0,fog:false});
+const moon=new THREE.Mesh(new THREE.SphereGeometry(3.1,24,18),moonMat);
+moon.position.set(-45,48,-70);
+scene.add(moon);
+
+const sunMat=new THREE.MeshBasicMaterial({color:'#fff2bd',transparent:true,opacity:1,fog:false});
+const sunMesh=new THREE.Mesh(new THREE.SphereGeometry(3.4,24,18),sunMat);
+sunMesh.position.set(48,55,-72);
+scene.add(sunMesh);
+
+const cloudMat=new THREE.MeshBasicMaterial({color:'#ffffff',transparent:true,opacity:.82,fog:false});
+const clouds=new THREE.Group();
+scene.add(clouds);
+function cloud(x,y,z,s) {
+  const g=new THREE.Group();
+  g.position.set(x,y,z); g.scale.setScalar(s); clouds.add(g);
+  [[0,0,0,1.4],[-1.4,-.15,0,1],[1.35,-.2,0,1.05],[.25,.55,0,1.05]].forEach(p=>{
+    const m=new THREE.Mesh(new THREE.SphereGeometry(p[3],14,10),cloudMat);
+    m.position.set(p[0],p[1],p[2]); g.add(m);
+  });
+}
+cloud(-25,25,-40,1.8);
+cloud(12,29,-48,1.5);
+cloud(38,23,-35,1.25);
+
+/* 昼夜切り替え */
+let night=false;
+let nightMix=0;
+const nightButton=document.getElementById('nightButton');
+function setNight(value) {
+  night=!!value;
+  nightButton.classList.toggle('night',night);
+  nightButton.setAttribute('aria-pressed',String(night));
+  nightButton.textContent=night?'☀️ 昼に切り替え':'🌙 夜に切り替え';
+}
+nightButton.addEventListener('click',()=>setNight(!night));
+
+function updateDayNight(dt) {
+  const target=night?1:0;
+  nightMix=lerp(nightMix,target,1-Math.exp(-dt*3.2));
+  scene.background.copy(daySky).lerp(nightSky,nightMix);
+  scene.fog.color.copy(daySky).lerp(nightSky,nightMix);
+  hemi.intensity=lerp(1.65,.32,nightMix);
+  hemi.color.set('#dff5ff').lerp(new THREE.Color('#536fa8'),nightMix);
+  hemi.groundColor.set('#668552').lerp(new THREE.Color('#18223c'),nightMix);
+  sun.intensity=lerp(2.65,.2,nightMix);
+  sun.color.set('#fff1d4').lerp(new THREE.Color('#91aaff'),nightMix);
+  for(const e of glowEntries) e.material.emissiveIntensity=.16+e.power*nightMix;
+  for(const e of nightLights) e.light.intensity=e.power*nightMix;
+  starMat.opacity=nightMix;
+  stars.visible=nightMix>.01;
+  moonMat.opacity=nightMix;
+  moon.visible=nightMix>.01;
+  sunMat.opacity=1-nightMix;
+  sunMesh.visible=nightMix<.99;
+  cloudMat.opacity=.82*(1-nightMix*.88);
+  renderer.toneMappingExposure=lerp(1.08,1.18,nightMix);
+}
+
+/* 自動検査用 API */
+window.park={
+  scene,camera,renderer,
+  wheel,gondolas,
+  coasterCurve,
+  coasterCar:train[0],
+  getCoasterProgress:()=>coasterProgress,
+  carousel,
+  setNight,
+  isNight:()=>night
+};
+
+let previousTime=performance.now();
+let elapsed=0;
+function animate(now) {
+  const dt=Math.min((now-previousTime)/1000,.05);
+  previousTime=now;
+  elapsed+=dt;
+
+  wheel.rotation.z+=dt*.115;
+  for(const gondola of gondolas) gondola.rotation.z=-wheel.rotation.z;
+
+  carousel.rotation.y+=dt*.34;
+  for(const horse of horses) {
+    horse.position.y=horse.userData.baseY+Math.sin(elapsed*2.1+horse.userData.phase)*.27;
+  }
+
+  coasterProgress=(coasterProgress+dt*.037)%1;
+  updateTrain();
+
+  fountainOrb.rotation.y+=dt;
+  updateDayNight(dt);
+  controls.update();
+  renderer.render(scene,camera);
+}
+renderer.setAnimationLoop(animate);
+
+addEventListener('resize',()=>{
+  camera.aspect=innerWidth/innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+  renderer.setSize(innerWidth,innerHeight);
+});
+</script>
+</body>
+</html>
